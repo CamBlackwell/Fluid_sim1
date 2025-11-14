@@ -6,8 +6,8 @@
 
 struct Ball {
     sf::CircleShape shape;
-    float x_vol = 6.5;
-    float y_vol = 6.5;
+    float x_vol = 3.f;
+    float y_vol = 3.f;
 };
 
 std::vector<Ball> makeBalls(int num){
@@ -15,10 +15,11 @@ std::vector<Ball> makeBalls(int num){
     std::srand(1);
     for (int i = 0; i < num; i++){
         Ball ball;
-        ball.shape.setRadius(5.f);
+        ball.shape.setRadius(6.f);
         
         ball.shape.setPosition({std::rand() % 700 + 50.f, std::rand() % 500 + 50.f});
-        ball.shape.setFillColor({sf::Color(std::rand() % 256, std::rand() % 256, std::rand() % 256)});
+        //ball.shape.setFillColor({sf::Color(std::rand() % 256, std::rand() % 256, std::rand() % 256)});
+        ball.shape.setFillColor(sf::Color{0, 0, std::rand() % 256});
 
         balls.push_back(ball);
     }
@@ -28,6 +29,9 @@ std::vector<Ball> makeBalls(int num){
 int main(){
     const unsigned int window_width = 800;
     const unsigned int window_height = 600;
+    int SLOW_DOWN_VALUE = 1.f;
+    float GRAVITY = 1.5;
+    float wall_absoribtion = 0.8;
     sf::RenderWindow window(sf::VideoMode({window_width, window_height}), "HAHA hello :)"); //create main window
     window.setVerticalSyncEnabled(true); //applications refresh rate to sync with monitors refresh rate
     //window.setFramerateLimit(60); //set framerate to 60 DONT MIX WITH setVerticalSync!!!!!!!
@@ -37,7 +41,8 @@ int main(){
     const int GRID_HEIGHT = window_height / CELL_SIZE;
 
     float scalar = 10.f;
-    std::vector<Ball> balls = makeBalls(60);
+    std::vector<Ball> balls = makeBalls(2050);
+
     
     while (window.isOpen()){
         while (const std::optional event = window.pollEvent()){
@@ -54,40 +59,38 @@ int main(){
             sf::Vector2f position = ball.shape.getPosition();
             float radius = ball.shape.getRadius();
 
-            
-
             if (position.x < 0){
                 position.x = 0;
-                ball.x_vol = -ball.x_vol;
+                ball.x_vol = -ball.x_vol * wall_absoribtion;
             }
             if (position.y < 0) {
                 position.y = 0;
-                ball.y_vol = -ball.y_vol;
+                ball.y_vol = -ball.y_vol * wall_absoribtion;
             }
             if (position.x + radius * 2 > windowSize.x)
             {
             position.x = windowSize.x - radius * 2;
-            ball.x_vol = -ball.x_vol;
+            ball.x_vol = -ball.x_vol * wall_absoribtion;
             }
             
             if (position.y + radius * 2 > windowSize.y){
             position.y = windowSize.y - radius * 2;
-            ball.y_vol = -ball.y_vol;
+            ball.y_vol = -ball.y_vol * wall_absoribtion;
             }
             
             ball.shape.setPosition(position);
 
             if (sf::Keyboard::isKeyPressed(sf::Keyboard::Key::Left)){
-            ball.shape.move({-scalar, 0.f});
+                ball.x_vol -= GRAVITY;
             }
             if (sf::Keyboard::isKeyPressed(sf::Keyboard::Key::Right)){
-                ball.shape.move({scalar, 0.f});
+                ball.x_vol += GRAVITY;
             }
             if (sf::Keyboard::isKeyPressed(sf::Keyboard::Key::Up)){
-                ball.shape.move({0.f, -scalar});
+                ball.y_vol -= GRAVITY;
             }
             if (sf::Keyboard::isKeyPressed(sf::Keyboard::Key::Down)){
-                ball.shape.move({0.f, scalar});
+                ball.y_vol += GRAVITY;
             }
         }
 
@@ -142,10 +145,9 @@ int main(){
 
                             float overlap = (r1 + r2) - distance;
     
-                            // Avoid division by zero
-                            if (distance == 0) distance = 0.01f;
+                            if (distance == 0) distance = 0.01f; //for division by zero
                             
-                            // Calculate direction vector (normalized)
+                            //calculate direction vector (normalized)
                             float dx = x_ball_distance / distance;
                             float dy = y_ball_distance / distance;
 
@@ -160,9 +162,7 @@ int main(){
                             if (velocity_along_normal > 0) continue;
 
                             float impulse = velocity_along_normal;
-
                             
-                            // Separate balls by half the overlap each (push them apart)
                             balls[i].x_vol -= impulse * dx;
                             balls[i].y_vol -= impulse * dy;
                             balls[j].x_vol += impulse * dx;
@@ -172,13 +172,15 @@ int main(){
                     }
 
                     }
-
                 }
             }
 
 
-        window.clear();
+        
+            window.clear();
+        
         for (const auto& ball : balls) {
+
             window.draw(ball.shape);
         }
         
