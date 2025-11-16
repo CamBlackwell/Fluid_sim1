@@ -6,6 +6,42 @@
 #include <thread>
 #include <mutex>
 
+const char* metaballFragmentShader = R"(
+uniform vec2 ballPositions[1000];
+uniform int ballCount;
+uniform float threshold;
+uniform float radius;
+uniform vec2 windowSize;
+
+void main() {
+    vec2 pixelPos = vec2(gl_FragCoord.x, windowSize.y - gl_FragCoord.y);
+    float sum = 0.0;
+
+    for(int i = 0; i < ballCount; i++){
+        vec2 diff = pixelPos - ballPositions[i];
+        float distSquared = dot(diff, diff);
+
+        if(distSquared > 9000.0) continue;
+
+        distSquared = max(distSquared, 25.0);
+
+        if(distSquared > 0.0001) {
+            sum += (radius * radius) / distSquared;
+        }
+        if(sum > threshold * 1.5) break;
+    }
+    
+    if(sum > threshold) {
+        float intensity = smoothstep(threshold, threshold * 20.0, sum);
+        vec3 colour1 = vec3(0.0, 0.502, 0.502); //light blue
+        vec3 colour2 = vec3(0.0, 0.2, 1.0); //Blue
+        vec3 finalColour = mix(colour1, colour2, intensity);
+        gl_FragColor = vec4(finalColour, 1.0);
+    } else {
+        discard; //transparent 
+    }
+}
+)";
 
 const int NUM_THREADS = std::thread::hardware_concurrency();
 
@@ -15,7 +51,6 @@ struct Ball {
     float y_vol = 3.f;
     int blue = 255;
     int red = 0;
-    std::mutex mtx;
 };
 
 std::vector<Ball> makeBalls(int num){
@@ -23,7 +58,7 @@ std::vector<Ball> makeBalls(int num){
     std::srand(1);
     for (int i = 0; i < num; i++){
         Ball ball;
-        ball.shape.setRadius(7.f);
+        ball.shape.setRadius(4.f);
         
         ball.shape.setPosition({std::rand() % 700 + 50.f, std::rand() % 500 + 50.f});
         //ball.shape.setFillColor({sf::Color(std::rand() % 256, std::rand() % 256, std::rand() % 256)});
@@ -39,6 +74,7 @@ std::vector<Ball> makeBalls(int num){
 int main(){
     const unsigned int window_width = 800;
     const unsigned int window_height = 600;
+    
     int SLOW_DOWN_VALUE = 1.f;
     float GRAVITY = 1.5;
     float wall_absoribtion = 0.8;
@@ -47,14 +83,29 @@ int main(){
     //window.setFramerateLimit(60); //set framerate to 60 DONT MIX WITH setVerticalSync!!!!!!!
 
     const int CELL_SIZE = 100; //100 x 100 pixels
-    const int GRID_WIDTH = window_width / CELL_SIZE;
-    const int GRID_HEIGHT = window_height / CELL_SIZE;
+    std::vector<std::vector<std::vector<int>>> grid;
+
 
     float scalar = 10.f;
-    std::vector<Ball> balls = makeBalls(550);
+    std::vector<Ball> balls = makeBalls(1000);
 
+    sf::Shader metaballShader;
+    if(!metaballShader.loadFromMemory(metaballFragmentShader, sf::Shader::Type::Fragment)) {
+        return -1;
+    }
+
+    sf::RenderTexture renderTexture;
+    if (!renderTexture.resize({window_width / 2, window_height / 2})) {
+        return -1;
+    }
+
+    renderTexture.display();
+
+    sf::Sprite sprite(renderTexture.getTexture());
+    sprite.setScale(sf::Vector2f(2.0f, 2.0f));
     
     while (window.isOpen()){
+
         while (const std::optional event = window.pollEvent()){
             if (event->is<sf::Event::Closed>())
                 window.close();
@@ -66,6 +117,17 @@ int main(){
                 auto size = event->getIf<sf::Event::Resized>();
                 sf::FloatRect visibleArea(sf::Vector2f(0, 0), sf::Vector2f(size->size.x, size->size.y));
                 window.setView(sf::View(visibleArea));
+
+                if (!renderTexture.resize({size->size.x / 2, size->size.y / 2})) {  
+                    return -1;
+                }
+                renderTexture.setView(sf::View(sf::FloatRect(sf::Vector2f(0, 0), sf::Vector2f(size->size.x / 2, size->size.y / 2))));
+
+                renderTexture.display();
+                sprite.setTexture(renderTexture.getTexture());
+                sprite.setTextureRect(sf::IntRect(sf::Vector2i(0, 0), sf::Vector2i(size->size.x / 2, size->size.y / 2)));
+                sprite.setPosition(sf::Vector2f(0, 0));
+                sprite.setScale(sf::Vector2f(2.0f, 2.0f));
             }
         }
 
@@ -117,7 +179,22 @@ int main(){
         }
 
 
-        std::vector<std::vector<std::vector<int>>> grid(GRID_WIDTH, std::vector<std::vector<int>>(GRID_HEIGHT)); //[x][y] vector info of  all balls in each cell
+        const int GRID_WIDTH = windowSize.x / CELL_SIZE;
+        const int GRID_HEIGHT = windowSize.y / CELL_SIZE;
+
+        //resize grid if needed (handles window resize too)
+        if (grid.size() != GRID_WIDTH || (grid.size() > 0 && grid[0].size() != GRID_HEIGHT)) {
+            grid.resize(GRID_WIDTH);
+            for (auto& row : grid) {
+                row.resize(GRID_HEIGHT);
+            }
+        }
+
+        for(auto& row : grid) {
+            for(auto& cell : row) {
+                cell.clear();
+            }
+}
 
         for (int i = 0; i < balls.size(); i++){
             sf::Vector2f pos = balls[i].shape.getPosition();
@@ -163,9 +240,6 @@ int main(){
                                 for (int j : grid[xneighbour][yneighbour]) {
                                     if (i >= j) continue; //skip doing same pair
 
-                                    std::unique_lock<std::mutex> lock_i(balls[i].mtx, std::defer_lock);
-                                    std::unique_lock<std::mutex> lock_j(balls[j].mtx, std::defer_lock);
-                                    std::lock(lock_i, lock_j);
 
                                     sf::Vector2f position1 = balls[i].shape.getPosition();
                                     sf::Vector2f position2 = balls[j].shape.getPosition();
@@ -212,16 +286,36 @@ int main(){
             for (auto& thread : threads) {
                 thread.join();
             }
+            /*for (const auto& ball : balls) {
+
+                window.draw(ball.shape);
+            }*/
 
 
-        
+
+            std::vector<float> positions;
+            for (const auto& ball : balls){
+                sf::Vector2f pos = ball.shape.getPosition();
+                float radius = ball.shape.getRadius();
+                positions.push_back((pos.x + radius) / 2.0f);
+                positions.push_back((pos.y + radius) / 2.0f);
+            }
+
+            sf::Vector2u currentSize = window.getSize();
+
+            metaballShader.setUniformArray("ballPositions", reinterpret_cast<sf::Glsl::Vec2*>(positions.data()), balls.size());
+            metaballShader.setUniform("ballCount", static_cast<int>(balls.size()));
+            metaballShader.setUniform("threshold", 1.5f);
+            metaballShader.setUniform("radius", 7.f);
+            metaballShader.setUniform("windowSize", sf::Vector2f(currentSize.x / 2.0f, currentSize.y / 2.0f));
+            
+            renderTexture.clear(sf::Color(248,248,255));
+            sf::RectangleShape fullscreen(sf::Vector2f(currentSize.x / 2.0f, currentSize.y / 2.0f));
+            renderTexture.draw(fullscreen, &metaballShader);
+            renderTexture.display();
+
             window.clear(sf::Color(248,248,255));
-        
-        for (const auto& ball : balls) {
-
-            window.draw(ball.shape);
-        }
-        
+            window.draw(sprite);
         window.display();
     }
 }
