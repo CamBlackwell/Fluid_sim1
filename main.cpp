@@ -3,11 +3,18 @@
 #include <cstdlib>
 #include <ctime>
 #include <cmath>
+#include <thread>
+#include <mutex>
+
+
+const int NUM_THREADS = std::thread::hardware_concurrency();
 
 struct Ball {
     sf::CircleShape shape;
     float x_vol = 3.f;
     float y_vol = 3.f;
+    int blue = 255;
+    int red = 0;
 };
 
 std::vector<Ball> makeBalls(int num){
@@ -15,11 +22,13 @@ std::vector<Ball> makeBalls(int num){
     std::srand(1);
     for (int i = 0; i < num; i++){
         Ball ball;
-        ball.shape.setRadius(6.f);
+        ball.shape.setRadius(5.f);
         
         ball.shape.setPosition({std::rand() % 700 + 50.f, std::rand() % 500 + 50.f});
         //ball.shape.setFillColor({sf::Color(std::rand() % 256, std::rand() % 256, std::rand() % 256)});
-        ball.shape.setFillColor(sf::Color{0, 0, std::rand() % 256});
+        ball.blue = rand() % (255 + 1 - 150) + 150;
+        ball.shape.setFillColor(sf::Color(0, 0, ball.blue));
+        //ball.shape.setFillColor(sf::Color(0,0, ball.colour));
 
         balls.push_back(ball);
     }
@@ -50,6 +59,12 @@ int main(){
                 window.close();
             if (sf::Keyboard::isKeyPressed(sf::Keyboard::Key::Escape)){
                 window.close();
+            }
+
+            if (event->is<sf::Event::Resized>()) {
+                auto size = event->getIf<sf::Event::Resized>();
+                sf::FloatRect visibleArea(sf::Vector2f(0, 0), sf::Vector2f(size->size.x, size->size.y));
+                window.setView(sf::View(visibleArea));
             }
         }
 
@@ -92,7 +107,14 @@ int main(){
             if (sf::Keyboard::isKeyPressed(sf::Keyboard::Key::Down)){
                 ball.y_vol += GRAVITY;
             }
+            float speedSquared = ball.x_vol * ball.x_vol + ball.y_vol * ball.y_vol;
+            /*int newColour = std::min(255, static_cast<int>(speedSquared * 0.2));
+            if (std::abs(newColour - ball.red) > 5){
+                ball.red = newColour;
+                ball.shape.setFillColor(sf::Color(ball.red, 0, ball.blue));
+            }*/
         }
+
 
         std::vector<std::vector<std::vector<int>>> grid(GRID_WIDTH, std::vector<std::vector<int>>(GRID_HEIGHT)); //[x][y] vector info of  all balls in each cell
 
@@ -110,74 +132,86 @@ int main(){
             }
         }
 
-        for (int i = 0; i < balls.size(); i++){
-            sf::Vector2f pos = balls[i].shape.getPosition();
-            float radius = balls[i].shape.getRadius();
+        std::vector<std::thread> threads;
+        int ballsPerThread = balls.size() / NUM_THREADS;
 
-            int centerX = pos.x + radius;
-            int centerY = pos.y + radius;
-            int cellX = centerX / CELL_SIZE;
-            int cellY = centerY / CELL_SIZE;
+        for (int t = 0; t < NUM_THREADS; t++) {
+            int start = t * ballsPerThread;
+            int end = (t == NUM_THREADS - 1)? balls.size() : (t + 1) * ballsPerThread;
 
-            for (int offset_x = -1; offset_x <= 1; offset_x++){
-                for (int offset_y = -1; offset_y <= 1; offset_y++){
-                    int xneighbour = cellX + offset_x;
-                    int yneighbour = cellY + offset_y;
+                threads.emplace_back([start, end, &balls, &grid, GRID_HEIGHT, GRID_WIDTH, CELL_SIZE] (){
+                    for (int i = start; i < end; i++){
 
-                    if (xneighbour < 0 || xneighbour >= GRID_WIDTH || yneighbour < 0 || yneighbour >= GRID_HEIGHT){
-                        continue;
+                        sf::Vector2f pos = balls[i].shape.getPosition();
+                        float radius = balls[i].shape.getRadius();
+
+                        int centerX = pos.x + radius;
+                        int centerY = pos.y + radius;
+                        int cellX = centerX / CELL_SIZE;
+                        int cellY = centerY / CELL_SIZE;
+
+                        for (int offset_x = -1; offset_x <= 1; offset_x++){
+                            for (int offset_y = -1; offset_y <= 1; offset_y++){
+                                int xneighbour = cellX + offset_x;
+                                int yneighbour = cellY + offset_y;
+
+                                if (xneighbour < 0 || xneighbour >= GRID_WIDTH || yneighbour < 0 || yneighbour >= GRID_HEIGHT){
+                                    continue;
+                                }
+
+                                for (int j : grid[xneighbour][yneighbour]) {
+                                    if (i >= j) continue; //skip doing same pair
+
+
+                                    sf::Vector2f position1 = balls[i].shape.getPosition();
+                                    sf::Vector2f position2 = balls[j].shape.getPosition();
+                                    float r1 = balls[i].shape.getRadius();
+                                    float r2 = balls[j].shape.getRadius();
+
+                                    float x_ball_distance = (position1.x + r1) - (position2.x + r2);
+                                    float y_ball_distance = (position1.y + r1) - (position2.y + r2);
+                                    float distance = std::sqrt(x_ball_distance * x_ball_distance + y_ball_distance * y_ball_distance);
+
+                                    if (distance < r1 + r2) {
+
+                                        float overlap = (r1 + r2) - distance;
+                
+                                        if (distance == 0) distance = 0.01f; //for division by zero
+                                        
+                                        //calculate direction vector (normalized)
+                                        float dx = x_ball_distance / distance;
+                                        float dy = y_ball_distance / distance;
+
+                                        balls[i].shape.move({dx * overlap * 0.5f, dy * overlap * 0.5f});
+                                        balls[j].shape.move({-dx * overlap * 0.5f, -dy * overlap * 0.5f});
+
+                                        float x_relative_velocity = balls[i].x_vol - balls[j].x_vol;
+                                        float y_relative_velocity = balls[i].y_vol - balls[j].y_vol;
+
+                                        float velocity_along_normal = x_relative_velocity * dx + y_relative_velocity * dy;
+
+                                        if (velocity_along_normal > 0) continue;
+
+                                        float impulse = velocity_along_normal;
+                                        
+                                        balls[i].x_vol -= impulse * dx;
+                                        balls[i].y_vol -= impulse * dy;
+                                        balls[j].x_vol += impulse * dx;
+                                        balls[j].y_vol += impulse * dy;
+                                    }
+                                }
+                            }
+                        } 
                     }
-
-                    for (int j : grid[xneighbour][yneighbour]) {
-                        if (i >= j) continue; //skip doing same pair
-
-
-                        sf::Vector2f position1 = balls[i].shape.getPosition();
-                        sf::Vector2f position2 = balls[j].shape.getPosition();
-                        float r1 = balls[i].shape.getRadius();
-                        float r2 = balls[j].shape.getRadius();
-
-                        float x_ball_distance = (position1.x + r1) - (position2.x + r2);
-                        float y_ball_distance = (position1.y + r1) - (position2.y + r2);
-                        float distance = std::sqrt(x_ball_distance * x_ball_distance + y_ball_distance * y_ball_distance);
-
-                        if (distance < r1 + r2) {
-
-                            float overlap = (r1 + r2) - distance;
-    
-                            if (distance == 0) distance = 0.01f; //for division by zero
-                            
-                            //calculate direction vector (normalized)
-                            float dx = x_ball_distance / distance;
-                            float dy = y_ball_distance / distance;
-
-                            balls[i].shape.move({dx * overlap * 0.5f, dy * overlap * 0.5f});
-                            balls[j].shape.move({-dx * overlap * 0.5f, -dy * overlap * 0.5f});
-
-                            float x_relative_velocity = balls[i].x_vol - balls[j].x_vol;
-                            float y_relative_velocity = balls[i].y_vol - balls[j].y_vol;
-
-                            float velocity_along_normal = x_relative_velocity * dx + y_relative_velocity * dy;
-
-                            if (velocity_along_normal > 0) continue;
-
-                            float impulse = velocity_along_normal;
-                            
-                            balls[i].x_vol -= impulse * dx;
-                            balls[i].y_vol -= impulse * dy;
-                            balls[j].x_vol += impulse * dx;
-                            balls[j].y_vol += impulse * dy;
-
-                        }
-                    }
-
-                    }
-                }
+                });
+            }
+            for (auto& thread : threads) {
+                thread.join();
             }
 
 
         
-            window.clear();
+            window.clear(sf::Color(248,248,255));
         
         for (const auto& ball : balls) {
 
@@ -187,3 +221,6 @@ int main(){
         window.display();
     }
 }
+
+
+// cd /c/Users/camer/OneDrive/Desktop/Projects/Programming_projects/Fluid_sim1
