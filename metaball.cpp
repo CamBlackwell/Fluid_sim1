@@ -72,8 +72,8 @@ std::vector<Ball> makeBalls(int num){
 }
 
 int main(){
-    const unsigned int window_width = 800;
-    const unsigned int window_height = 600;
+    const unsigned int window_width = 1200;
+    const unsigned int window_height = 800;
     
     int SLOW_DOWN_VALUE = 1.f;
     float GRAVITY = 1.5;
@@ -260,8 +260,8 @@ int main(){
                                         float dx = x_ball_distance / distance;
                                         float dy = y_ball_distance / distance;
 
-                                        balls[i].shape.move({dx * overlap * 0.5f, dy * overlap * 0.5f});
-                                        balls[j].shape.move({-dx * overlap * 0.5f, -dy * overlap * 0.5f});
+                                        balls[i].shape.move({dx * overlap * 0.6f, dy * overlap * 0.6f});
+                                        balls[j].shape.move({-dx * overlap * 0.6f, -dy * overlap * 0.6f});
 
                                         float x_relative_velocity = balls[i].x_vol - balls[j].x_vol;
                                         float y_relative_velocity = balls[i].y_vol - balls[j].y_vol;
